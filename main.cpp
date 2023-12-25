@@ -8,6 +8,7 @@
 
 #include "lib.hpp"
 
+namespace prog_opt = boost::program_options;
 
 int main(int argc, const char* argv[])
 {
@@ -88,8 +89,7 @@ int main(int argc, const char* argv[])
         • блок файла читается с диска не более одного раза
         • блок файла читается только в случае необходимости
         • не забыть, что дубликатов может быть больше чем два
-        • пакет bayan содержащий исполняемый файл bayan опубликован на
-        bintray
+        • пакет bayan содержащий исполняемый файл bayan опубликован
         • описание параметров в файле README.md корне репозитория
         • отправлена на проверку ссылка на страницу репозитория
     */
@@ -116,6 +116,50 @@ int main(int argc, const char* argv[])
     {
         std::cout << "Constructions project of objects:\n\n";
 
+
+        prog_opt::options_description desc{"Options"};
+        desc.add_options()
+                ("sc",  prog_opt::value<std::vector<std::string>>(),            "directories for scan (\"path\", ..., \"path\")")
+                ("unsc",prog_opt::value<std::vector<std::string>>(),            "directories for unscan (\"path\", ..., \"path\")")
+                ("l",   prog_opt::value<size_t>()->default_value(0),            "level in tree of directories for scan (0..)")
+                ("msf", prog_opt::value<size_t>()->default_value(1),            "minimal size of file (1..)")
+                ("mask",prog_opt::value<std::string>()->default_value("*"),     "mask of file for scan (regexp)")
+                ("sb",  prog_opt::value<size_t>()->default_value(1),            "size of block in file (bytes)")
+                ("hash",prog_opt::value<std::string>()->default_value("md5"),   "algorithm of hash (md5, crc32)")
+                ;
+
+        prog_opt::variables_map vm;
+        prog_opt::store(parse_command_line(argc, argv, desc), vm);
+        prog_opt::notify(vm);
+
+        if (vm.count("sc"))
+        {
+            std::cout << vm["sc"].as<std::vector<std::string>>().size() << '\n';
+        }
+        else if (vm.count("unsc"))
+        {
+            std::cout << vm["unsc"].as<std::vector<std::string>>().size() << '\n';
+        }
+        else if (vm.count("l"))
+        {
+            std::cout << vm["l"].as<size_t>() << '\n';
+        }
+        else if (vm.count("msf"))
+        {
+            std::cout << vm["msf"].as<size_t>() << '\n';
+        }
+        else if (vm.count("mask"))
+        {
+            std::cout << vm["mask"].as<std::string>() << '\n';
+        }
+        else if (vm.count("sb"))
+        {
+            std::cout << vm["sb"].as<size_t>() << '\n';
+        }
+        else if (vm.count("hash"))
+        {
+            std::cout << vm["hash"].as<std::string>() << '\n';
+        }
 
         std::cout << "\n\nDestructions objects:\n";
     }
