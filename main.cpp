@@ -9,6 +9,110 @@
 #include "lib.hpp"
 
 namespace prog_opt = boost::program_options;
+using namespace boost::filesystem;
+
+// Builder pattern
+class Settings
+{
+    std::vector<std::string> m_pathsForScan;
+    std::vector<std::string> m_pathsForUnScan;
+    size_t m_depthScan;
+    size_t m_minimalSizeOfFile;
+    std::string m_maskForScan;
+    size_t m_sizeOfBlock;
+    std::string m_hashAlg;
+
+public:
+    Settings() :
+        m_pathsForScan()
+        , m_pathsForUnScan()
+        , m_depthScan(0)
+        , m_minimalSizeOfFile(1)
+        , m_maskForScan("*")
+        , m_sizeOfBlock(1)
+        , m_hashAlg("md5")
+    {};
+    ~Settings() = default;
+
+    friend class SettingsBuilder;
+
+    std::vector<std::string> getPathsForScan() const
+    {   return m_pathsForScan;  }
+
+    std::vector<std::string> getPathsForUnScan() const
+    {   return m_pathsForUnScan;  }
+
+    size_t getDepthScan() const
+    {   return m_depthScan;  }
+
+    size_t getMinimalSizeOfFile() const
+    {   return m_minimalSizeOfFile;  }
+
+    std::string getMaskForScan() const
+    {   return m_maskForScan;  }
+
+    size_t getSizeOfBlock() const
+    {   return m_sizeOfBlock;  }
+
+    std::string getHashAlg() const
+    {   return m_hashAlg;  }
+};
+
+class SettingsBuilder
+{
+    Settings m_settings;
+
+public:
+    SettingsBuilder() = default;
+    ~SettingsBuilder() = default;
+
+    SettingsBuilder& withPathScan(const std::vector<std::string>& pathsForScan)
+    {
+        m_settings.m_pathsForScan = pathsForScan;
+        return *this;
+    }
+
+    SettingsBuilder& withPathUnScan(const std::vector<std::string>& pathsForUnScan)
+    {
+        m_settings.m_pathsForUnScan = pathsForUnScan;
+        return *this;
+    }
+
+    SettingsBuilder& withDepthScan(const size_t& depthScan)
+    {
+        m_settings.m_depthScan = depthScan;
+        return *this;
+    }
+
+    SettingsBuilder& withMinimalSizeOfFile(const size_t& minimalSizeOfFile)
+    {
+        m_settings.m_minimalSizeOfFile = minimalSizeOfFile;
+        return *this;
+    }
+
+    SettingsBuilder& withMaskForScan(const std::string& maskForScan)
+    {
+        m_settings.m_maskForScan = maskForScan;
+        return *this;
+    }
+
+    SettingsBuilder& withSizeOfBlock(const size_t& sizeOfBlock)
+    {
+        m_settings.m_sizeOfBlock = sizeOfBlock;
+        return *this;
+    }
+
+    SettingsBuilder& withHashAlg(const std::string& hashAlg)
+    {
+        m_settings.m_hashAlg = hashAlg;
+        return *this;
+    }
+
+    Settings& build()
+    {
+        return m_settings;
+    }
+};
 
 int main(int argc, const char* argv[])
 {
@@ -116,50 +220,69 @@ int main(int argc, const char* argv[])
     {
         std::cout << "Constructions project of objects:\n\n";
 
+        SettingsBuilder optionsBuilder;
+
 
         prog_opt::options_description desc{"Options"};
         desc.add_options()
                 ("sc",  prog_opt::value<std::vector<std::string>>(),            "directories for scan (\"path\", ..., \"path\")")
                 ("unsc",prog_opt::value<std::vector<std::string>>(),            "directories for unscan (\"path\", ..., \"path\")")
-                ("l",   prog_opt::value<size_t>()->default_value(0),            "level in tree of directories for scan (0..)")
+                ("dpth",prog_opt::value<size_t>()->default_value(0),            "depth in tree of directories for scan (0..)")
                 ("msf", prog_opt::value<size_t>()->default_value(1),            "minimal size of file (1..)")
                 ("mask",prog_opt::value<std::string>()->default_value("*"),     "mask of file for scan (regexp)")
                 ("sb",  prog_opt::value<size_t>()->default_value(1),            "size of block in file (bytes)")
                 ("hash",prog_opt::value<std::string>()->default_value("md5"),   "algorithm of hash (md5, crc32)")
                 ;
 
+        // bayan --sc ["path", "path"] --unsc ["path", "path"] --dpth 2 --msf 5 --mask "*" --sb 20 --hash md5
         prog_opt::variables_map vm;
         prog_opt::store(parse_command_line(argc, argv, desc), vm);
         prog_opt::notify(vm);
 
         if (vm.count("sc"))
         {
-            std::cout << vm["sc"].as<std::vector<std::string>>().size() << '\n';
+            std::cout << vm["sc"].as<std::vector<std::string>>().at(0) << '\n';
+            optionsBuilder.withPathScan(vm["sc"].as<std::vector<std::string>>());
+
+            const std::vector<std::string> &v = vm["sc"].as<std::vector<std::string>>();
+
+//            std::vector<std::string> ooo;
+//            std::copy_if(v.begin(), v.end(), std::ostream_iterator<std::string>(std::cout, ", "), [&ooo](std::string path){ ooo.push_back(path); return true; });
         }
-        else if (vm.count("unsc"))
+        if (vm.count("unsc"))
         {
-            std::cout << vm["unsc"].as<std::vector<std::string>>().size() << '\n';
+            std::cout << vm["unsc"].as<std::vector<std::string>>().at(0) << '\n';
+            optionsBuilder.withPathUnScan(vm["sc"].as<std::vector<std::string>>());
         }
-        else if (vm.count("l"))
+        if (vm.count("dpth"))
         {
-            std::cout << vm["l"].as<size_t>() << '\n';
+            std::cout << vm["dpth"].as<size_t>() << '\n';
+            optionsBuilder.withDepthScan(vm["dpth"].as<size_t>());
         }
-        else if (vm.count("msf"))
+        if (vm.count("msf"))
         {
             std::cout << vm["msf"].as<size_t>() << '\n';
+            optionsBuilder.withMinimalSizeOfFile(vm["msf"].as<size_t>());
         }
-        else if (vm.count("mask"))
+        if (vm.count("mask"))
         {
             std::cout << vm["mask"].as<std::string>() << '\n';
+            optionsBuilder.withMaskForScan(vm["mask"].as<std::string>());
         }
-        else if (vm.count("sb"))
+        if (vm.count("sb"))
         {
             std::cout << vm["sb"].as<size_t>() << '\n';
+            optionsBuilder.withSizeOfBlock(vm["sb"].as<size_t>());
         }
-        else if (vm.count("hash"))
+        if (vm.count("hash"))
         {
             std::cout << vm["hash"].as<std::string>() << '\n';
+            optionsBuilder.withHashAlg(vm["hash"].as<std::string>());
         }
+
+
+        Settings options = optionsBuilder.build();
+
 
         std::cout << "\n\nDestructions objects:\n";
     }
