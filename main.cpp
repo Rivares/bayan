@@ -3,6 +3,8 @@
 #include <iostream>
 #include <memory>
 
+#include <boost/interprocess/file_mapping.hpp>
+#include <boost/interprocess/mapped_region.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 
@@ -138,7 +140,9 @@ int main(int argc, const char* argv[])
         • один из имеющихся алгоритмов хэширования (crc32, md5 -
         конкретные варианты определить самостоятельно), в задании
         эта функция упоминается как H
+    */
 
+    /*!
         Результатом работы утилиты должен быть список полных путей файлов
         с идентичным содержимым, выводимый на стандартный вывод. На одной
         строке один файл. Идентичные файлы должны подряд, одной группой.
@@ -222,37 +226,31 @@ int main(int argc, const char* argv[])
 
         SettingsBuilder optionsBuilder;
 
-
         prog_opt::options_description desc{"Options"};
         desc.add_options()
-                ("sc",  prog_opt::value<std::vector<std::string>>(),            "directories for scan (\"path\", ..., \"path\")")
-                ("unsc",prog_opt::value<std::vector<std::string>>(),            "directories for unscan (\"path\", ..., \"path\")")
-                ("dpth",prog_opt::value<size_t>()->default_value(0),            "depth in tree of directories for scan (0..)")
-                ("msf", prog_opt::value<size_t>()->default_value(1),            "minimal size of file (1..)")
-                ("mask",prog_opt::value<std::string>()->default_value("*"),     "mask of file for scan (regexp)")
-                ("sb",  prog_opt::value<size_t>()->default_value(1),            "size of block in file (bytes)")
-                ("hash",prog_opt::value<std::string>()->default_value("md5"),   "algorithm of hash (md5, crc32)")
+                ("sc",  prog_opt::value<std::vector<std::string>>()->multitoken(),  "directories for scan (\"path\", ..., \"path\")")
+                ("unsc",prog_opt::value<std::vector<std::string>>()->multitoken(),  "directories for unscan (\"path\", ..., \"path\")")
+                ("dpth",prog_opt::value<size_t>()->default_value(0),                "depth in tree of directories for scan (0..)")
+                ("msf", prog_opt::value<size_t>()->default_value(1),                "minimal size of file (1..)")
+                ("mask",prog_opt::value<std::string>()->default_value("*"),         "mask of file for scan (regexp)")
+                ("sb",  prog_opt::value<size_t>()->default_value(1),                "size of block in file (bytes)")
+                ("hash",prog_opt::value<std::string>()->default_value("md5"),       "algorithm of hash (md5, crc32)")
                 ;
 
-        // bayan --sc ["path", "path"] --unsc ["path", "path"] --dpth 2 --msf 5 --mask "*" --sb 20 --hash md5
+        // bayan --sc="path" "path" --unsc="path" "path" --dpth=2 --msf=5 --mask="*" --sb=20 --hash=md5
         prog_opt::variables_map vm;
         prog_opt::store(parse_command_line(argc, argv, desc), vm);
         prog_opt::notify(vm);
 
         if (vm.count("sc"))
         {
-            std::cout << vm["sc"].as<std::vector<std::string>>().at(0) << '\n';
+            std::cout << vm["sc"].as<std::vector<std::string>>().size() << '\n';
             optionsBuilder.withPathScan(vm["sc"].as<std::vector<std::string>>());
-
-            const std::vector<std::string> &v = vm["sc"].as<std::vector<std::string>>();
-
-//            std::vector<std::string> ooo;
-//            std::copy_if(v.begin(), v.end(), std::ostream_iterator<std::string>(std::cout, ", "), [&ooo](std::string path){ ooo.push_back(path); return true; });
         }
         if (vm.count("unsc"))
         {
-            std::cout << vm["unsc"].as<std::vector<std::string>>().at(0) << '\n';
-            optionsBuilder.withPathUnScan(vm["sc"].as<std::vector<std::string>>());
+            std::cout << vm["unsc"].as<std::vector<std::string>>().size() << '\n';
+            optionsBuilder.withPathUnScan(vm["unsc"].as<std::vector<std::string>>());
         }
         if (vm.count("dpth"))
         {
@@ -282,6 +280,61 @@ int main(int argc, const char* argv[])
 
 
         Settings options = optionsBuilder.build();
+
+        path currPath("."); // sc
+        boost::system::error_code error;
+
+        const boost::interprocess::mode_t mode = boost::interprocess::read_only;
+//        boost::interprocess::file_mapping fm(filename, mode);
+
+//        boost::interprocess::mapped_region region(fm, mode, 0, 0);
+
+//        const char* begin = static_cast<const char*>(
+
+//            region.get_address()
+//        );
+
+//        const char* pos = std::find(
+//            begin, begin + region.get_size(), '\1'
+//        );
+
+        directory_iterator end_itr;
+
+        // cycle through the directory
+        for (directory_iterator itr(currPath); itr != end_itr; ++itr)
+        {
+            // If it's not a directory, list it. If you want to list directories too, just remove this check.
+            if (is_regular_file(itr->path())) {
+                // assign current file name to current_file and echo it out to the console.
+                std::string current_file = itr->path().string();
+                std::cout << current_file << std::endl;
+            }
+        }
+
+        try
+        {
+            if (exists(currPath))
+            {
+                if (is_regular_file(currPath))
+                    std::cout << currPath << " size is " << file_size(currPath) << '\n';
+
+                  else if (is_directory(currPath))
+                  {
+                    std::cout << currPath << " is a directory containing:\n";
+
+                    for (directory_entry& x : directory_iterator(currPath))
+                      std::cout << "    " << x.path() << '\n';
+                  }
+                  else
+                    std::cout << currPath << " exists, but is not a regular file or directory\n";
+            }
+            else
+                  std::cout << currPath << " does not exist\n";
+        }
+        catch (const filesystem_error& ex)
+        {
+            std::cout << ex.what() << '\n';
+        }
 
 
         std::cout << "\n\nDestructions objects:\n";

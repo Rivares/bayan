@@ -19,8 +19,8 @@ ___
 
 ## Options
 
-* `sc`   *directories for scan (\"path\", ..., \"path\")*
-* `unsc` *directories for unscan (\"path\", ..., \"path\")*
+* `sc`   *directories for scan (\"path\" ... \"path\")*
+* `unsc` *directories for unscan (\"path\" ... \"path\")*
 * `dpth` *dpth in tree of directories for scan (0..)*
 * `msf`  *minimal size of file (1..)*
 * `mask` *mask of file for scan (regexp)*
@@ -32,5 +32,5 @@ ___
 ## Example
 
 ```shell
-bayan --sc ["path", "path"] --unsc ["path", "path"] --dpth 2 --msf 5 --mask "*" --sb 20 --hash md5
+bayan --sc="path" "path" --unsc="path" "path" --dpth=2 --msf=5 --mask="*" --sb=20 --hash=md5
 ```

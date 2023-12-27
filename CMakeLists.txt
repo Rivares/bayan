@@ -25,7 +25,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -pg")
 
 #find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 #find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
-find_package(Boost 1.30 REQUIRED COMPONENTS program_options)
+find_package(Boost 1.30 REQUIRED COMPONENTS program_options system filesystem)
 
 add_executable(${PROJECT_NAME}
     main.cpp
@@ -56,6 +56,8 @@ target_link_libraries(
     profiler
     pthread # required
     ${Boost_LIBRARIES}
+    ${Boost_FILESYSTEM_LIBRARY}
+    ${Boost_SYSTEM_LIBRARY}
 )
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)

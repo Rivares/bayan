@@ -25,7 +25,7 @@ jobs:
       - run: sudo apt-get install libgtest-dev libgmock-dev libtbb-dev -y
       - run: sudo apt-get install build-essential libgl1-mesa-dev qt6-base-dev
       - run: sudo apt-get install qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools libqt5svg5 libqt5widgets5
-      - run: sudo apt-get install libboost-program-options-dev
+      - run: sudo apt-get install libboost-all-dev
       - run: git clone https://github.com/gperftools/gperftools && cd gperftools && ./autogen.sh && ./configure && make && sudo make install
       - run: sudo ln -s /usr/local/lib/libprofiler.so /usr/lib/libprofiler.so.0
       - run: sudo apt install -yq golang
