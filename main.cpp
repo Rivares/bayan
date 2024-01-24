@@ -116,6 +116,8 @@ public:
     }
 };
 
+void outputFiles(Settings& options, const path& currPath, size_t curDepthScan = 0);
+
 int main(int argc, const char* argv[])
 {
     ProfilerStart("bayan.prof");
@@ -244,97 +246,90 @@ int main(int argc, const char* argv[])
 
         if (vm.count("sc"))
         {
-            std::cout << vm["sc"].as<std::vector<std::string>>().size() << '\n';
             optionsBuilder.withPathScan(vm["sc"].as<std::vector<std::string>>());
         }
         if (vm.count("unsc"))
         {
-            std::cout << vm["unsc"].as<std::vector<std::string>>().size() << '\n';
             optionsBuilder.withPathUnScan(vm["unsc"].as<std::vector<std::string>>());
         }
         if (vm.count("dpth"))
         {
-            std::cout << vm["dpth"].as<size_t>() << '\n';
             optionsBuilder.withDepthScan(vm["dpth"].as<size_t>());
         }
         if (vm.count("msf"))
         {
-            std::cout << vm["msf"].as<size_t>() << '\n';
             optionsBuilder.withMinimalSizeOfFile(vm["msf"].as<size_t>());
         }
         if (vm.count("mask"))
         {
-            std::cout << vm["mask"].as<std::string>() << '\n';
             optionsBuilder.withMaskForScan(vm["mask"].as<std::string>());
         }
         if (vm.count("sb"))
         {
-            std::cout << vm["sb"].as<size_t>() << '\n';
             optionsBuilder.withSizeOfBlock(vm["sb"].as<size_t>());
         }
         if (vm.count("hash"))
         {
-            std::cout << vm["hash"].as<std::string>() << '\n';
             optionsBuilder.withHashAlg(vm["hash"].as<std::string>());
         }
 
 
         Settings options = optionsBuilder.build();
 
-        path currPath("."); // sc
+
+
+
+        /* Read file
         boost::system::error_code error;
 
         const boost::interprocess::mode_t mode = boost::interprocess::read_only;
-//        boost::interprocess::file_mapping fm(filename, mode);
+        boost::interprocess::file_mapping fm(filename, mode);
 
-//        boost::interprocess::mapped_region region(fm, mode, 0, 0);
+        boost::interprocess::mapped_region region(fm, mode, 0, 0);
 
-//        const char* begin = static_cast<const char*>(
+        const char* begin = static_cast<const char*>(
 
-//            region.get_address()
-//        );
+            region.get_address()
+        );
 
-//        const char* pos = std::find(
-//            begin, begin + region.get_size(), '\1'
-//        );
+        const char* pos = std::find(
+            begin, begin + region.get_size(), '\1'
+        );
+        */
 
-        directory_iterator end_itr;
 
-        // cycle through the directory
-        for (directory_iterator itr(currPath); itr != end_itr; ++itr)
-        {
-            // If it's not a directory, list it. If you want to list directories too, just remove this check.
-            if (is_regular_file(itr->path())) {
-                // assign current file name to current_file and echo it out to the console.
-                std::string current_file = itr->path().string();
-                std::cout << current_file << std::endl;
-            }
-        }
 
-        try
-        {
-            if (exists(currPath))
-            {
-                if (is_regular_file(currPath))
-                    std::cout << currPath << " size is " << file_size(currPath) << '\n';
+        path currPath(options.getPathsForScan().front());
+        outputFiles(options, currPath);
 
-                  else if (is_directory(currPath))
-                  {
-                    std::cout << currPath << " is a directory containing:\n";
 
-                    for (directory_entry& x : directory_iterator(currPath))
-                      std::cout << "    " << x.path() << '\n';
-                  }
-                  else
-                    std::cout << currPath << " exists, but is not a regular file or directory\n";
-            }
-            else
-                  std::cout << currPath << " does not exist\n";
-        }
-        catch (const filesystem_error& ex)
-        {
-            std::cout << ex.what() << '\n';
-        }
+
+
+
+//        try
+//        {
+//            if (exists(currPath))
+//            {
+//                if (is_regular_file(currPath))
+//                    std::cout << currPath << " size is " << file_size(currPath) << '\n';
+
+//                  else if (is_directory(currPath))
+//                  {
+//                    std::cout << currPath << " is a directory containing:\n";
+
+//                    for (directory_entry& x : directory_iterator(currPath))
+//                      std::cout << "    " << x.path() << '\n';
+//                  }
+//                  else
+//                    std::cout << currPath << " exists, but is not a regular file or directory\n";
+//            }
+//            else
+//                  std::cout << currPath << " does not exist\n";
+//        }
+//        catch (const filesystem_error& ex)
+//        {
+//            std::cout << ex.what() << '\n';
+//        }
 
 
         std::cout << "\n\nDestructions objects:\n";
@@ -351,4 +346,35 @@ int main(int argc, const char* argv[])
     return 0;
 }
 
+
+void outputFiles(Settings& options, const path& currPath, size_t curDepthScan)
+{
+    size_t idxVecStr = 0;
+
+    std::cout << "|_" <<currPath.string() << std::endl;
+
+    directory_iterator itrBeg(currPath);
+    directory_iterator itrEnd;
+    while(curDepthScan < options.getDepthScan())
+    {
+        while (itrBeg != itrEnd)
+        {
+            if (is_regular_file(itrBeg->path()))
+            {
+                std::cout << itrBeg->path().string() << std::endl;
+            }
+            else if ((is_directory(itrBeg->path())) && (curDepthScan < options.getDepthScan()))
+            {
+                outputFiles(options, itrBeg->path(), ++curDepthScan);
+                --curDepthScan;
+            }
+            ++itrBeg;
+        }
+
+        // Исключение из провекрки
+        // Отметка проверенных папок
+
+//        currPath = options.getPathsForScan().at(++idxVecStr);
+    }
+}
 
