@@ -116,7 +116,7 @@ public:
     }
 };
 
-void outputFiles(Settings& options, const path& currPath, size_t curDepthScan = 0);
+void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan);
 
 int main(int argc, const char* argv[])
 {
@@ -300,7 +300,8 @@ int main(int argc, const char* argv[])
 
 
         path currPath(options.getPathsForScan().front());
-        outputFiles(options, currPath);
+        size_t curDepthScan = 0;
+        outputFiles(options, currPath, curDepthScan);
 
 
 
@@ -347,15 +348,18 @@ int main(int argc, const char* argv[])
 }
 
 
-void outputFiles(Settings& options, const path& currPath, size_t curDepthScan)
+void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan)
 {
     size_t idxVecStr = 0;
 
     std::cout << "|_" <<currPath.string() << std::endl;
 
+    ++curDepthScan;
+
     directory_iterator itrBeg(currPath);
     directory_iterator itrEnd;
-    while(curDepthScan < options.getDepthScan())
+    path prevPath = currPath;
+    while((curDepthScan < options.getDepthScan()) || ((itrBeg == itrEnd)))
     {
         while (itrBeg != itrEnd)
         {
@@ -365,16 +369,18 @@ void outputFiles(Settings& options, const path& currPath, size_t curDepthScan)
             }
             else if ((is_directory(itrBeg->path())) && (curDepthScan < options.getDepthScan()))
             {
-                outputFiles(options, itrBeg->path(), ++curDepthScan);
-                --curDepthScan;
+                prevPath = currPath;
+                outputFiles(options, itrBeg->path(), curDepthScan);
             }
             ++itrBeg;
         }
-
+        break;
         // Исключение из провекрки
         // Отметка проверенных папок
 
 //        currPath = options.getPathsForScan().at(++idxVecStr);
     }
+    --curDepthScan;
+
 }
 
