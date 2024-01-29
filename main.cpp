@@ -116,7 +116,7 @@ public:
     }
 };
 
-void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan);
+void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
 
 int main(int argc, const char* argv[])
 {
@@ -133,6 +133,7 @@ int main(int argc, const char* argv[])
         • директории для исключения из сканирования (может быть несколько)
         • уровень сканирования (один на все директории, 0 - только указанная
         директория без вложенных)
+
         • минимальный размер файла, по умолчанию проверяются все файлы
         больше 1 байта.
         • маски имен файлов разрешенных для сравнения (не зависят от
@@ -299,38 +300,57 @@ int main(int argc, const char* argv[])
 
 
 
-        path currPath(options.getPathsForScan().front());
         size_t curDepthScan = 0;
-        outputFiles(options, currPath, curDepthScan);
+        const auto& listUnScan = options.getPathsForUnScan();
+
+        for (path currPath: options.getPathsForScan())
+        {
+            currPath = (currPath.is_relative())? current_path() : currPath;
 
 
+            // Исключение из проверки
+            bool isFoundFullUnScanPath = false;
+            std::vector<path> foundPartialUnScanPath(listUnScan.size());
+            for (const auto& item : listUnScan)
+            {
+//                std::cout << "1@ " << currPath << '\t';
+//                std::cout << "2@ " << item << '\n';
+                if ((currPath.compare(item) == 0))
+                {
+                    std::cout << "Full@ " << item << '\n';
+                    isFoundFullUnScanPath = true;   // Full match
+                    break;
+                }
 
+                if ((currPath.compare(item) == -1))
+                {
+                    std::cout << "Part@" << item << '\n';
+                    foundPartialUnScanPath.push_back(item);  // Partial match
+                }
+            }
 
+            if (!isFoundFullUnScanPath)
+            {
+                if (!foundPartialUnScanPath.empty())
+                {
+                    std::cout << "Part " << currPath.string() << '\n';
 
-//        try
-//        {
-//            if (exists(currPath))
-//            {
-//                if (is_regular_file(currPath))
-//                    std::cout << currPath << " size is " << file_size(currPath) << '\n';
+                    outputFiles(options, currPath, curDepthScan, foundPartialUnScanPath);
+                }
+                else
+                {
+                    std::cout << "|878_" << currPath.string() << '\n';
+                    outputFiles(options, currPath, curDepthScan, foundPartialUnScanPath);
+                }
+            }
+            else
+            {
+                // Исключение path из проверки
+                std::cout << "Full " << currPath.string() << '\n';
+                continue;
+            }
 
-//                  else if (is_directory(currPath))
-//                  {
-//                    std::cout << currPath << " is a directory containing:\n";
-
-//                    for (directory_entry& x : directory_iterator(currPath))
-//                      std::cout << "    " << x.path() << '\n';
-//                  }
-//                  else
-//                    std::cout << currPath << " exists, but is not a regular file or directory\n";
-//            }
-//            else
-//                  std::cout << currPath << " does not exist\n";
-//        }
-//        catch (const filesystem_error& ex)
-//        {
-//            std::cout << ex.what() << '\n';
-//        }
+        }
 
 
         std::cout << "\n\nDestructions objects:\n";
@@ -347,38 +367,58 @@ int main(int argc, const char* argv[])
     return 0;
 }
 
-
-void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan)
+void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthScan, const std::vector<path>& unScanPath)
 {
     size_t idxVecStr = 0;
 
-    std::cout << "|_" <<currPath.string() << std::endl;
+    auto outputPath = [](const size_t replacedCount, const path& path_){
+        std::string replacedStr(path_.string());
+        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
+    };
+
+    auto checkMatchPath = [unScanPath](const path& path_) -> bool {
+        for(const auto& item : unScanPath)
+        {
+            if (path_.compare(item) == 0)
+            {   return true;    }
+        }
+        return false;
+    };
 
     ++curDepthScan;
 
-    directory_iterator itrBeg(currPath);
+    directory_iterator itrBeg(currGlobPath);
     directory_iterator itrEnd;
-    path prevPath = currPath;
+    path prevPath = currGlobPath;
     while((curDepthScan < options.getDepthScan()) || ((itrBeg == itrEnd)))
     {
         while (itrBeg != itrEnd)
         {
-            if (is_regular_file(itrBeg->path()))
+            path iterPath = itrBeg->path();
+
+            // TODO 1. Исключение из проверки
+
+            if (is_regular_file(iterPath))
             {
-                std::cout << itrBeg->path().string() << std::endl;
+                outputPath(currGlobPath.string().size(), iterPath);
             }
-            else if ((is_directory(itrBeg->path())) && (curDepthScan < options.getDepthScan()))
+            else if (
+                     (is_directory(iterPath)) &&
+                     (curDepthScan < options.getDepthScan()) &&
+                     (!checkMatchPath(iterPath))
+                     )
             {
-                prevPath = currPath;
-                outputFiles(options, itrBeg->path(), curDepthScan);
+                prevPath = currGlobPath;
+
+                outputPath(currGlobPath.string().size(), iterPath);
+
+                outputFiles(options, iterPath, curDepthScan, unScanPath);
             }
             ++itrBeg;
         }
         break;
-        // Исключение из провекрки
         // Отметка проверенных папок
 
-//        currPath = options.getPathsForScan().at(++idxVecStr);
     }
     --curDepthScan;
 
