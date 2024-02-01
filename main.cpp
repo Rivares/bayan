@@ -1,7 +1,10 @@
 #include <gperftools/profiler.h>
 
+
+#include <unordered_map>
 #include <iostream>
 #include <memory>
+#include <regex>
 
 #include <boost/interprocess/file_mapping.hpp>
 #include <boost/interprocess/mapped_region.hpp>
@@ -117,7 +120,7 @@ public:
 };
 
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
-
+std::unordered_multimap<uint64_t, path> doubleFiles;
 int main(int argc, const char* argv[])
 {
     ProfilerStart("bayan.prof");
@@ -367,6 +370,7 @@ int main(int argc, const char* argv[])
     return 0;
 }
 
+
 void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthScan, const std::vector<path>& unScanPath)
 {
     size_t idxVecStr = 0;
@@ -396,11 +400,20 @@ void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthSc
         {
             path iterPath = itrBeg->path();
 
-            // TODO 1. Исключение из проверки
-
             if (is_regular_file(iterPath))
             {
                 outputPath(currGlobPath.string().size(), iterPath);
+
+                if (
+                        (static_cast<size_t>(iterPath.size()) > options.getMinimalSizeOfFile()) &&
+                        (std::regex_search(iterPath.string()
+                                          , std::regex(options.getMaskForScan()
+                                          , std::regex_constants::ECMAScript | std::regex_constants::icase)))
+                    )
+                {
+                    doubleFiles.insert({static_cast<uint64_t>(iterPath.size()), iterPath});
+                    std::cout << static_cast<uint64_t>(iterPath.size()) << "  " << iterPath.string() << '\n';
+                }
             }
             else if (
                      (is_directory(iterPath)) &&
