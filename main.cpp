@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <regex>
 
 #include <boost/interprocess/file_mapping.hpp>
@@ -356,6 +357,25 @@ int main(int argc, const char* argv[])
         }
 
 
+        for (auto itMap = doubleFiles.begin(); itMap != doubleFiles.end();)
+        {
+            if (doubleFiles.count(itMap->first) == 1)
+            {   itMap = doubleFiles.erase(itMap);    }
+            else
+            {
+                std::vector<std::thread> threadPool(std::thread::hardware_concurrency());
+
+                auto buck = doubleFiles.bucket(itMap->first);
+                for (auto it = doubleFiles.begin(buck); it != doubleFiles.end(buck); ++it)
+                {
+                   std::cout << (*it).second << '\n';
+                }
+                ++itMap;
+            }
+        }
+
+
+
         std::cout << "\n\nDestructions objects:\n";
     }
     catch (const std::exception& except)
@@ -377,7 +397,7 @@ void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthSc
 
     auto outputPath = [](const size_t replacedCount, const path& path_){
         std::string replacedStr(path_.string());
-        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
+//        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
     };
 
     auto checkMatchPath = [unScanPath](const path& path_) -> bool {
@@ -408,10 +428,10 @@ void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthSc
                         (static_cast<size_t>(iterPath.size()) > options.getMinimalSizeOfFile()) &&
                         (std::regex_search(iterPath.string()
                                           , std::regex(options.getMaskForScan()
-                                          , std::regex_constants::ECMAScript | std::regex_constants::icase)))
+                                          , std::regex_constants::ECMAScript)))
                     )
                 {
-                    doubleFiles.insert({static_cast<uint64_t>(iterPath.size()), iterPath});
+                    doubleFiles.insert({static_cast<uint64_t>(file_size(iterPath)), iterPath});
                     std::cout << static_cast<uint64_t>(iterPath.size()) << "  " << iterPath.string() << '\n';
                 }
             }
