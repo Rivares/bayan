@@ -1,16 +1,23 @@
 #include <gperftools/profiler.h>
 
-
+#include <condition_variable>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <mutex>
+#include <queue>
 #include <regex>
 
 #include <boost/interprocess/file_mapping.hpp>
 #include <boost/interprocess/mapped_region.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+
+#include <boost/algorithm/hex.hpp>
+#include <boost/uuid/detail/md5.hpp>
+#include <boost/uuid/detail/sha1.hpp>
 
 #include "lib.hpp"
 
@@ -122,6 +129,55 @@ public:
 
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
 std::unordered_multimap<uint64_t, path> doubleFiles;
+
+class DataFile
+{
+private:
+public:
+    explicit DataFile(const path& path_)
+        : m_currPath(path_)
+    {
+        std::cout << m_currPath.string() << '\n';
+    }
+    ~DataFile()
+    {}
+
+    path m_currPath;
+std::string kkkk;
+    std::hash<std::string> m_currHash;
+
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+//            fd;
+    void readBlockOfFile()
+    {
+        std::cout << "Read file" << '\n';
+
+        /* Read file
+        boost::system::error_code error;
+
+        const boost::interprocess::mode_t mode = boost::interprocess::read_only;
+        boost::interprocess::file_mapping fm(filename, mode);
+
+        boost::interprocess::mapped_region region(fm, mode, 0, 0);
+
+        const char* begin = static_cast<const char*>(
+
+            region.get_address()
+        );
+
+        const char* pos = std::find(
+            begin, begin + region.get_size(), '\1'
+        );
+        */
+    }
+
+    std::string getPath() const noexcept
+    {   return m_currPath.string(); }
+
+};
+
+
 int main(int argc, const char* argv[])
 {
     ProfilerStart("bayan.prof");
@@ -284,23 +340,7 @@ int main(int argc, const char* argv[])
 
 
 
-        /* Read file
-        boost::system::error_code error;
 
-        const boost::interprocess::mode_t mode = boost::interprocess::read_only;
-        boost::interprocess::file_mapping fm(filename, mode);
-
-        boost::interprocess::mapped_region region(fm, mode, 0, 0);
-
-        const char* begin = static_cast<const char*>(
-
-            region.get_address()
-        );
-
-        const char* pos = std::find(
-            begin, begin + region.get_size(), '\1'
-        );
-        */
 
 
 
@@ -357,19 +397,36 @@ int main(int argc, const char* argv[])
         }
 
 
+
+
         for (auto itMap = doubleFiles.begin(); itMap != doubleFiles.end();)
         {
             if (doubleFiles.count(itMap->first) == 1)
             {   itMap = doubleFiles.erase(itMap);    }
             else
             {
-                std::vector<std::thread> threadPool(std::thread::hardware_concurrency());
+                auto bucket = doubleFiles.bucket(itMap->first);
 
-                auto buck = doubleFiles.bucket(itMap->first);
-                for (auto it = doubleFiles.begin(buck); it != doubleFiles.end(buck); ++it)
+                std::unordered_multiset<std::shared_ptr<DataFile>> tasks;
+                std::vector<std::thread> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
+                for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
-                   std::cout << (*it).second << '\n';
+                    tasks.insert(std::make_shared<DataFile>((*it).second));
                 }
+                for (auto& item : tasks)
+                {
+                    std::thread thr(&DataFile::readBlockOfFile, item);
+                    threadPool.emplace_back(std::move(thr)); //std::transform
+                }
+
+
+
+
+                for (auto& item : threadPool)
+                {
+                    item.join();
+                }
+
                 ++itMap;
             }
         }
