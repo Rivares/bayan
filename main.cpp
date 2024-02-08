@@ -128,7 +128,7 @@ public:
 };
 
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
-std::unordered_multimap<uint64_t, path> doubleFiles;
+std::unordered_multimap</*uint64_t*/ boost::uintmax_t, path> doubleFiles;
 
 class DataFile
 {
@@ -143,7 +143,6 @@ public:
     {}
 
     path m_currPath;
-std::string kkkk;
     std::hash<std::string> m_currHash;
 
     std::mutex m_mutex;
@@ -406,28 +405,34 @@ int main(int argc, const char* argv[])
             else
             {
                 auto bucket = doubleFiles.bucket(itMap->first);
-
+                auto it = doubleFiles.begin(bucket);
+                auto referenceSize = file_size((*it).second);
                 std::unordered_multiset<std::shared_ptr<DataFile>> tasks;
-                std::vector<std::thread> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
-                for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
+                std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
+                for (; it != doubleFiles.end(bucket);)
                 {
-                    tasks.insert(std::make_shared<DataFile>((*it).second));
-                }
-                for (auto& item : tasks)
-                {
-                    std::thread thr(&DataFile::readBlockOfFile, item);
-                    threadPool.emplace_back(std::move(thr)); //std::transform
+                    if (referenceSize == file_size((*it).second))
+                    {
+                        tasks.insert(std::make_shared<DataFile>((*it).second));
+                    }
+
+                    ++it;
+                    if (it != doubleFiles.end(bucket))
+                    {   ++itMap;    }
                 }
 
 
+                for (std::shared_ptr<DataFile> item : tasks)
+                {
+                    threadPool.emplace_back(std::move(std::make_shared<std::thread>(&DataFile::readBlockOfFile, item.get()))); //std::transform algorithm
+                }
 
 
                 for (auto& item : threadPool)
                 {
-                    item.join();
-                }
-
-                ++itMap;
+                    if (item)
+                    {   item->join();   }
+                }                
             }
         }
 
@@ -488,8 +493,8 @@ void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthSc
                                           , std::regex_constants::ECMAScript)))
                     )
                 {
-                    doubleFiles.insert({static_cast<uint64_t>(file_size(iterPath)), iterPath});
-                    std::cout << static_cast<uint64_t>(iterPath.size()) << "  " << iterPath.string() << '\n';
+                    doubleFiles.insert({file_size(iterPath), iterPath});
+                    std::cout << static_cast<uint64_t>(file_size(iterPath)) << "  " << iterPath.string() << '\n';
                 }
             }
             else if (
