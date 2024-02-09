@@ -152,23 +152,17 @@ public:
     {
         std::cout << "Read file" << '\n';
 
-        /* Read file
+        // Read file
         boost::system::error_code error;
 
         const boost::interprocess::mode_t mode = boost::interprocess::read_only;
-        boost::interprocess::file_mapping fm(filename, mode);
+        boost::interprocess::file_mapping fm(m_currPath.string().c_str(), mode);
 
         boost::interprocess::mapped_region region(fm, mode, 0, 0);
 
-        const char* begin = static_cast<const char*>(
+        const char* begin = static_cast<const char*>(region.get_address());
 
-            region.get_address()
-        );
-
-        const char* pos = std::find(
-            begin, begin + region.get_size(), '\1'
-        );
-        */
+        const char* pos = std::find(begin, begin + region.get_size(), '\1');
     }
 
     std::string getPath() const noexcept
@@ -405,26 +399,22 @@ int main(int argc, const char* argv[])
             else
             {
                 auto bucket = doubleFiles.bucket(itMap->first);
-                auto it = doubleFiles.begin(bucket);
-                auto referenceSize = file_size((*it).second);
+                auto itr = doubleFiles.begin(bucket);
+                auto referenceSize = file_size((*itr).second);
                 std::unordered_multiset<std::shared_ptr<DataFile>> tasks;
                 std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
-                for (; it != doubleFiles.end(bucket);)
+                for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
                     if (referenceSize == file_size((*it).second))
                     {
                         tasks.insert(std::make_shared<DataFile>((*it).second));
                     }
-
-                    ++it;
-                    if (it != doubleFiles.end(bucket))
-                    {   ++itMap;    }
                 }
-
 
                 for (std::shared_ptr<DataFile> item : tasks)
                 {
                     threadPool.emplace_back(std::move(std::make_shared<std::thread>(&DataFile::readBlockOfFile, item.get()))); //std::transform algorithm
+                    ++itMap;
                 }
 
 
