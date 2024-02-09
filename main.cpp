@@ -163,6 +163,13 @@ public:
         const char* begin = static_cast<const char*>(region.get_address());
 
         const char* pos = std::find(begin, begin + region.get_size(), '\1');
+        std::cout << std::string(begin, begin + region.get_size()) << '\n';
+
+//        std::ifstream f(filename, std::ifstream::binary);
+//        // ...
+//        char c[kilobyte];
+//        f.read(c, kilobyte)
+
     }
 
     std::string getPath() const noexcept
