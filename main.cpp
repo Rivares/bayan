@@ -23,6 +23,8 @@
 
 namespace prog_opt = boost::program_options;
 using namespace boost::filesystem;
+using boost::uuids::detail::md5;
+using boost::uuids::detail::sha1;
 
 // Builder pattern
 class Settings
@@ -130,11 +132,16 @@ public:
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
 std::unordered_multimap</*uint64_t*/ boost::uintmax_t, path> doubleFiles;
 
+template <typename HashType, typename HashType_DigestType>
 class DataFile
 {
 private:
+    size_t blockSize = 5; // initialization from constexpr variable
+    HashType m_currHash;
+    path m_currPath;
+
 public:
-    explicit DataFile(const path& path_)
+    explicit DataFile(const path& path_) noexcept
         : m_currPath(path_)
     {
         std::cout << m_currPath.string() << '\n';
@@ -142,38 +149,62 @@ public:
     ~DataFile()
     {}
 
-    path m_currPath;
-    std::hash<std::string> m_currHash;
+
+    std::string hashFile;
 
     std::mutex m_mutex;
     std::condition_variable m_cv;
-//            fd;
+
     void readBlockOfFile()
     {
-        std::cout << "Read file" << '\n';
+        std::cout << "Read file. thread_id: " << std::this_thread::get_id() << '\n';
 
         // Read file
-        boost::system::error_code error;
+        std::ifstream fileStream(m_currPath.string(), std::ifstream::binary);
 
-        const boost::interprocess::mode_t mode = boost::interprocess::read_only;
-        boost::interprocess::file_mapping fm(m_currPath.string().c_str(), mode);
+        if (!fileStream.is_open())
+        {   std::cout << "Error open file!\n";   return;  }
 
-        boost::interprocess::mapped_region region(fm, mode, 0, 0);
+//        std::lock_guard<std::mutex> lock(m_mutex);
 
-        const char* begin = static_cast<const char*>(region.get_address());
+        char* readBlock = new char[blockSize];
+        while (!fileStream.eof())
+        {
+            fileStream.read(readBlock, blockSize);
+            hashFile += getHash(readBlock);
 
-        const char* pos = std::find(begin, begin + region.get_size(), '\1');
-        std::cout << std::string(begin, begin + region.get_size()) << '\n';
+            // condition_variable
+        }
 
-//        std::ifstream f(filename, std::ifstream::binary);
-//        // ...
-//        char c[kilobyte];
-//        f.read(c, kilobyte)
+        delete [] readBlock;
+        readBlock = nullptr;
 
+        fileStream.close();
+
+
+        hashFile.resize(20);
+        std::cout << hashFile << '\n';
     }
 
     std::string getPath() const noexcept
     {   return m_currPath.string(); }
+
+    std::string getHash(char* readBlock)
+    {
+        std::string result;
+        HashType_DigestType digest;
+
+        m_currHash.process_bytes(readBlock, blockSize);
+        m_currHash.get_digest(digest);
+
+        const auto charDigest = reinterpret_cast<const char*>(&digest);
+
+        boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
+
+        result.resize(5);
+
+        return result;
+    }
 
 };
 
@@ -408,19 +439,19 @@ int main(int argc, const char* argv[])
                 auto bucket = doubleFiles.bucket(itMap->first);
                 auto itr = doubleFiles.begin(bucket);
                 auto referenceSize = file_size((*itr).second);
-                std::unordered_multiset<std::shared_ptr<DataFile>> tasks;
+                std::unordered_multiset<std::shared_ptr<DataFile<md5, md5::digest_type>>> tasks;    // SFINAE
                 std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
                 for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
                     if (referenceSize == file_size((*it).second))
                     {
-                        tasks.insert(std::make_shared<DataFile>((*it).second));
+                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second));
                     }
                 }
 
-                for (std::shared_ptr<DataFile> item : tasks)
+                for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : tasks)
                 {
-                    threadPool.emplace_back(std::move(std::make_shared<std::thread>(&DataFile::readBlockOfFile, item.get()))); //std::transform algorithm
+                    threadPool.emplace_back(std::move(std::make_shared<std::thread>(&DataFile<md5, md5::digest_type>::readBlockOfFile, item.get()))); //std::transform algorithm
                     ++itMap;
                 }
 
