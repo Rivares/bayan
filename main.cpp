@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <atomic>
 #include <mutex>
 #include <queue>
 #include <regex>
@@ -132,6 +133,31 @@ public:
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
 std::unordered_multimap</*uint64_t*/ boost::uintmax_t, path> doubleFiles;
 
+
+
+class HashChecker
+{
+    private:
+
+    std::mutex& m_mutex;
+    std::condition_variable& m_cv;
+
+    public:
+        HashChecker(std::mutex& genMutex, std::condition_variable& genCV)
+            : m_mutex(genMutex)
+            , m_cv(genCV)
+        {}
+        ~HashChecker() = default;
+
+        void check()
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            m_cv.notify_all();
+        }
+};
+
+
 template <typename HashType, typename HashType_DigestType>
 class DataFile
 {
@@ -140,9 +166,14 @@ private:
     HashType m_currHash;
     path m_currPath;
 
+    std::mutex& m_mutex;
+    std::condition_variable& m_cv;
+
 public:
-    explicit DataFile(const path& path_) noexcept
+    explicit DataFile(const path& path_, std::mutex& genMutex, std::condition_variable& genCV) noexcept
         : m_currPath(path_)
+        , m_mutex(genMutex)
+        , m_cv(genCV)
     {
         std::cout << m_currPath.string() << '\n';
     }
@@ -151,9 +182,6 @@ public:
 
 
     std::string hashFile;
-
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
 
     void readBlockOfFile()
     {
@@ -165,7 +193,8 @@ public:
         if (!fileStream.is_open())
         {   std::cout << "Error open file!\n";   return;  }
 
-//        std::lock_guard<std::mutex> lock(m_mutex);
+
+        std::unique_lock<std::mutex> lock(m_mutex);
 
         char* readBlock = new char[blockSize];
         while (!fileStream.eof())
@@ -173,7 +202,11 @@ public:
             fileStream.read(readBlock, blockSize);
             hashFile += getHash(readBlock);
 
-            // condition_variable
+//            dataReady = true;
+
+            m_cv.wait(lock, [] {
+                return true;
+            });
         }
 
         delete [] readBlock;
@@ -439,15 +472,27 @@ int main(int argc, const char* argv[])
                 auto bucket = doubleFiles.bucket(itMap->first);
                 auto itr = doubleFiles.begin(bucket);
                 auto referenceSize = file_size((*itr).second);
+
+//                std::atomic<bool> genDataReady;
+//                genDataReady.store(false);
+
+                std::mutex genMutex;
+                std::condition_variable genCV;
+                HashChecker head{genMutex, genCV};
+
                 std::unordered_multiset<std::shared_ptr<DataFile<md5, md5::digest_type>>> tasks;    // SFINAE
                 std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
                 for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
                     if (referenceSize == file_size((*it).second))
                     {
-                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second));
+                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second, genMutex, genCV));
                     }
                 }
+
+
+
+                std::thread threadChecker(&HashChecker::check, head);
 
                 for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : tasks)
                 {
@@ -458,9 +503,12 @@ int main(int argc, const char* argv[])
 
                 for (auto& item : threadPool)
                 {
-                    if (item)
+                    if ( (item) && (threadChecker.joinable()) )
                     {   item->join();   }
-                }                
+                }
+
+                if (threadChecker.joinable())
+                {   threadChecker.join();   }
             }
         }
 
