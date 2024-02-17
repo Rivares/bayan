@@ -144,18 +144,39 @@ private:
     path m_currPath;
 
     std::mutex& m_mutex;
-    std::condition_variable& m_cv;    
-    bool                     m_notified;
+    std::condition_variable& m_cv;
+//    std::atomic<uint64_t>    m_cntNotified;
+    uint64_t& m_cntNotified;
     bool                     m_earlyRelease;
+
+    std::string getHash(char* readBlock)
+    {
+        std::string result;
+        HashType_DigestType digest;
+
+        m_currHash.process_bytes(readBlock, blockSize);
+        m_currHash.get_digest(digest);
+
+        const auto charDigest = reinterpret_cast<const char*>(&digest);
+
+        boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
+
+        result.resize(5);
+
+        return result;
+    }
 
 public:
     std::string hashFile;
 
-    explicit DataFile(const path& path_, std::mutex& genMutex, std::condition_variable& genCV) noexcept
+    explicit DataFile(const path& path_
+                      , std::mutex& genMutex
+                      , std::condition_variable& genCV
+                      , uint64_t& genCntNotified) noexcept
         : m_currPath(path_)
         , m_mutex(genMutex)
         , m_cv(genCV)
-        , m_notified(false)
+        , m_cntNotified(genCntNotified)
         , m_earlyRelease(false)
     {
         std::cout << m_currPath.string() << '\n';
@@ -175,26 +196,24 @@ public:
 
 
         char* readBlock = new char[blockSize];
-
+        while ((!fileStream.eof()) && (!m_earlyRelease))
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-
-            while ((!fileStream.eof()) && (!m_earlyRelease))
             {
                 fileStream.read(readBlock, blockSize);
                 hashFile += getHash(readBlock);
 
-                m_tasks.push(this);
-                m_notified = true;
-                m_cv.notify_one();
+                ++m_cntNotified;
             }
+
+            m_cv.notify_one();
         }
+
 
         delete [] readBlock;
         readBlock = nullptr;
 
         fileStream.close();
-
 
         hashFile.resize(20);
         std::cout << hashFile << '\n';
@@ -202,24 +221,6 @@ public:
 
     std::string getPath() const noexcept
     {   return m_currPath.string(); }
-
-    std::string getHash(char* readBlock)
-    {
-        std::string result;
-        HashType_DigestType digest;
-
-        m_currHash.process_bytes(readBlock, blockSize);
-        m_currHash.get_digest(digest);
-
-        const auto charDigest = reinterpret_cast<const char*>(&digest);
-
-        boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
-
-        result.resize(5);
-
-        return result;
-    }
-
 
     void setEarlyRelease() noexcept
     {   m_earlyRelease = true;    }
@@ -235,39 +236,70 @@ class HashChecker
 
     std::mutex& m_mutex;
     std::condition_variable& m_cv;
-    std::vector<DataFile<HashType, HashType_DigestType>*>   m_tasks;
+    std::unordered_multiset<std::shared_ptr<DataFile<HashType, HashType_DigestType>>> m_tasks;
     bool                     m_done;
-    bool                     m_notified;
+//    std::atomic<uint64_t>    m_cntNotified;
+    uint64_t&    m_cntNotified;
 
     public:
-        explicit HashChecker(const uint64_t countTasks, std::mutex& genMutex, std::condition_variable& genCV) noexcept
+        explicit HashChecker<HashType, HashType_DigestType>(const uint64_t countTasks
+                                                            , std::mutex& genMutex
+                                                            , std::condition_variable& genCV
+                                                            , uint64_t& genCntNotified
+                                                            , std::unordered_multiset<std::shared_ptr<DataFile<HashType, HashType_DigestType>>>& genTasks)
             : m_countTasks(countTasks)
             , m_mutex(genMutex)
             , m_cv(genCV)
+            , m_cntNotified(genCntNotified)
+            , m_tasks(genTasks)
             , m_done(false)
-            , m_notified(false)
-        {}
+        {
+//            m_cntNotified.store(genCntNotified);
+        }
         ~HashChecker() = default;
 
         void check()
         {
             while(!m_done)
             {
-                std::unique_lock<std::mutex> locker(m_mutex);
-                while(!m_notified) // от ложных пробуждений
-                {   m_cv.wait(locker);  }
+                std::queue<decltype(m_tasks.begin())> tasksOnDelete;
 
-                // если есть ошибки в очереди, обрабатывать их
-                if (m_tasks.size() == m_countTasks)
                 {
-                    std::cout << "Checking hashes!\n";
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    std::unique_lock<std::mutex> locker(m_mutex);
+                    m_cv.wait(locker, [this]{   return (m_cntNotified == m_countTasks);  });
 
-                    m_tasks.at(0)->setEarlyRelease();
+                    std::cout << "Checking hashes! Size(" << m_tasks.size() << ")\n";
 
-                    m_tasks.clear();
+                    for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : m_tasks)
+                    {
+                        auto it = m_tasks.begin();
+                        ++it;
+                        for (; it != m_tasks.end(); ++it)
+                        {
+                            // Working...
+
+                            if (item->hashFile != (*it)->hashFile)
+                            {
+                                std::cout << "Unique hash -> Need delete!\n";
+                                (*it)->setEarlyRelease();
+                                break;
+                            }
+                        }
+
+                        if (it != m_tasks.end())
+                        {
+                            tasksOnDelete.push(it);
+                        }
+                    }
+
+                    m_cntNotified = 0;
                 }
-                m_notified = false;
+
+                while (tasksOnDelete.size() > 0)
+                {
+                    m_tasks.erase(tasksOnDelete.front());
+                    tasksOnDelete.pop();
+                }
             }
         }
 
@@ -441,8 +473,6 @@ int main(int argc, const char* argv[])
 
 
 
-
-
         size_t curDepthScan = 0;
         const auto& listUnScan = options.getPathsForUnScan();
 
@@ -508,12 +538,9 @@ int main(int argc, const char* argv[])
                 auto itr = doubleFiles.begin(bucket);
                 auto referenceSize = file_size((*itr).second);
 
-//                std::atomic<bool> genDataReady;
-//                genDataReady.store(false);
-
                 std::mutex genMutex;
                 std::condition_variable genCV;
-                HashChecker<md5, md5::digest_type> head{genMutex, genCV};
+                uint64_t genCntNotified = 0;
 
                 std::unordered_multiset<std::shared_ptr<DataFile<md5, md5::digest_type>>> tasks;    // SFINAE
                 std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
@@ -521,17 +548,16 @@ int main(int argc, const char* argv[])
                 {
                     if (referenceSize == file_size((*it).second))
                     {
-                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second, genMutex, genCV));
+                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second, genMutex, genCV, genCntNotified));
                     }
                 }
 
-
-
-                std::thread threadChecker(&HashChecker<md5, md5::digest_type>::check, head);
+                HashChecker<md5, md5::digest_type> head(tasks.size(), genMutex, genCV, genCntNotified, tasks);
+                std::thread threadChecker(&HashChecker<md5, md5::digest_type>::check, &head);
 
                 for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : tasks)
                 {
-                    threadPool.emplace_back(std::move(std::make_shared<std::thread>(&DataFile<md5, md5::digest_type>::readBlockOfFile, item.get()))); //std::transform algorithm
+                    threadPool.emplace_back(std::make_shared<std::thread>(&DataFile<md5, md5::digest_type>::readBlockOfFile, item.get())); //std::transform algorithm
                     ++itMap;
                 }
 
@@ -548,8 +574,6 @@ int main(int argc, const char* argv[])
                 head.setDone();
             }
         }
-
-
 
         std::cout << "\n\nDestructions objects:\n";
     }
@@ -568,8 +592,6 @@ int main(int argc, const char* argv[])
 
 void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthScan, const std::vector<path>& unScanPath)
 {
-    size_t idxVecStr = 0;
-
     auto outputPath = [](const size_t replacedCount, const path& path_){
         std::string replacedStr(path_.string());
 //        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
