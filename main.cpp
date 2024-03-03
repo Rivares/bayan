@@ -10,6 +10,7 @@
 #include <mutex>
 #include <queue>
 #include <regex>
+#include <list>
 
 #include <boost/interprocess/file_mapping.hpp>
 #include <boost/interprocess/mapped_region.hpp>
@@ -133,164 +134,62 @@ public:
 void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
 std::unordered_multimap</*uint64_t*/ boost::uintmax_t, path> doubleFiles;
 
-std::mutex genMutex;
-std::condition_variable genCV;
-std::atomic<uint64_t> genCntNotified = 0;
+
+
+/*!
+    Логика структуры - простое наследование с разграничением функционала по классам
+*/
+
+
 
 template <typename HashType, typename HashType_DigestType>
-class DataFile
+std::string getHash(char* readBlock, const uint64_t blockSize, HashType m_currHash)
 {
-private:
-    size_t blockSize = 5; // initialization from constexpr variable
-    HashType m_currHash;
-    path m_currPath;
+    std::string result;
+    HashType_DigestType digest;
 
-    bool                     m_earlyRelease;
+    m_currHash.process_bytes(readBlock, blockSize);
+    m_currHash.get_digest(digest);
 
-    std::string getHash(char* readBlock)
+    const auto charDigest = reinterpret_cast<const char*>(&digest);
+
+    boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
+
+    result.resize(5);
+
+    return result;
+}
+
+template <typename HashType, typename HashType_DigestType>
+struct DataFile
+{
+    explicit DataFile(const std::string& pathToFile_)
+        : pathToFile(pathToFile_)
+        , fileSize(static_cast<uint64_t>(file_size(pathToFile)))
+        , fd(pathToFile, std::ios::in | std::ios::binary)
+        , blockSize(200)
     {
-        std::string result;
-        HashType_DigestType digest;
-
-        m_currHash.process_bytes(readBlock, blockSize);
-        m_currHash.get_digest(digest);
-
-        const auto charDigest = reinterpret_cast<const char*>(&digest);
-
-        boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
-
-        result.resize(5);
-
-        return result;
+        if (!fd.is_open())
+        {   std::cout << "Error open file!\n";    } // std::throw
     }
 
-public:
+    ~DataFile()
+    {
+        std::cout << "~DataFile()!\n";
+
+        if (fd.is_open())
+        {   fd.close(); }
+    }
+
+    const std::string& pathToFile;
+    uint64_t fileSize;
+    std::ifstream fd;
+    int positionRead = 0;
+    bool isClosed = false;
+    uint32_t blockSize;
+    HashType hashMethod;
     std::string hashFile;
-
-    explicit DataFile(const path& path_) noexcept
-        : m_currPath(path_)
-        , m_earlyRelease(false)
-    {
-        std::cout << m_currPath.string() << '\n';
-    }
-    ~DataFile() = default;
-
-
-    void readBlockOfFile()
-    {
-        std::cout << "Read file. thread_id: " << std::this_thread::get_id() << '\n';
-
-        // Read file
-        std::ifstream fileStream(m_currPath.string(), std::ifstream::binary);
-
-        if (!fileStream.is_open())
-        {   std::cout << "Error open file!\n";   return;  }
-
-
-        char* readBlock = new char[blockSize];
-        while ((!fileStream.eof()) || (!m_earlyRelease))
-        {
-            {
-                std::lock_guard<std::mutex> lock(genMutex);
-
-                fileStream.read(readBlock, blockSize);
-                hashFile += getHash(readBlock);
-
-                genCntNotified.fetch_add(1);
-            }
-
-            genCV.notify_one();
-        }
-
-
-        delete [] readBlock;
-        readBlock = nullptr;
-
-        fileStream.close();
-
-        hashFile.resize(20);
-        std::cout << hashFile << '\n';
-    }
-
-    std::string getPath() const noexcept
-    {   return m_currPath.string(); }
-
-    void setEarlyRelease() noexcept
-    {   m_earlyRelease = true;    }
-
 };
-
-template <typename HashType, typename HashType_DigestType>
-class HashChecker
-{
-    private:
-
-    const uint64_t m_countTasks;
-
-
-    std::unordered_multiset<std::shared_ptr<DataFile<HashType, HashType_DigestType>>> m_tasks;
-    bool                     m_done;
-
-    public:
-        explicit HashChecker<HashType, HashType_DigestType>(const uint64_t countTasks
-                                                            , std::unordered_multiset<std::shared_ptr<DataFile<HashType, HashType_DigestType>>>& genTasks)
-            : m_countTasks(countTasks)
-            , m_tasks(genTasks)
-            , m_done(false)
-        {
-        }
-        ~HashChecker() = default;
-
-        void check()
-        {
-            std::queue<decltype(m_tasks.begin())> tasksOnDelete;
-
-            while(!m_done)
-            {
-                {
-                    std::unique_lock<std::mutex> locker(genMutex);
-                    genCV.wait(locker, [this]{   return (genCntNotified.load() == (m_countTasks));  });
-
-                    std::cout << "Checking hashes! Size(" << m_tasks.size() << ")\n";
-
-                    for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : m_tasks)
-                    {
-                        auto it = m_tasks.begin();
-                        ++it;
-                        for (; it != m_tasks.end(); ++it)
-                        {
-                            // Working...
-
-                            if (item->hashFile != (*it)->hashFile)
-                            {
-                                std::cout << "Unique hash -> Need delete!\n";
-                                (*it)->setEarlyRelease();
-                                break;
-                            }
-                        }
-
-                        if (it != m_tasks.end())
-                        {
-                            tasksOnDelete.push(it);
-                        }
-                    }
-
-                    genCntNotified.store(0);
-                }
-
-                while (tasksOnDelete.size() > 0)
-                {
-                    m_tasks.erase(tasksOnDelete.front());
-                    tasksOnDelete.pop();
-                }
-            }
-        }
-
-        void setDone() noexcept
-        {   m_done = true;    }
-};
-
-
 
 int main(int argc, const char* argv[])
 {
@@ -473,14 +372,14 @@ int main(int argc, const char* argv[])
 //                std::cout << "2@ " << item << '\n';
                 if ((currPath.compare(item) == 0))
                 {
-                    std::cout << "Full@ " << item << '\n';
+//                    std::cout << "Full@ " << item << '\n';
                     isFoundFullUnScanPath = true;   // Full match
                     break;
                 }
 
                 if ((currPath.compare(item) == -1))
                 {
-                    std::cout << "Part@" << item << '\n';
+//                    std::cout << "Part@" << item << '\n';
                     foundPartialUnScanPath.push_back(item);  // Partial match
                 }
             }
@@ -489,20 +388,20 @@ int main(int argc, const char* argv[])
             {
                 if (!foundPartialUnScanPath.empty())
                 {
-                    std::cout << "Part " << currPath.string() << '\n';
+//                    std::cout << "Part " << currPath.string() << '\n';
 
                     outputFiles(options, currPath, curDepthScan, foundPartialUnScanPath);
                 }
                 else
                 {
-                    std::cout << "|878_" << currPath.string() << '\n';
+//                    std::cout << "|878_" << currPath.string() << '\n';
                     outputFiles(options, currPath, curDepthScan, foundPartialUnScanPath);
                 }
             }
             else
             {
                 // Исключение path из проверки
-                std::cout << "Full " << currPath.string() << '\n';
+//                std::cout << "Full " << currPath.string() << '\n';
                 continue;
             }
 
@@ -521,41 +420,90 @@ int main(int argc, const char* argv[])
                 auto itr = doubleFiles.begin(bucket);
                 auto referenceSize = file_size((*itr).second);
 
-                genCntNotified.store(0);
 
-                std::unordered_multiset<std::shared_ptr<DataFile<md5, md5::digest_type>>> tasks;    // SFINAE
-                std::vector<std::shared_ptr<std::thread>> threadPool(doubleFiles.bucket_size(bucket));//std::thread::hardware_concurrency());
+
+                std::list<DataFile<md5, md5::digest_type>> openedFiles;
                 for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
                     if (referenceSize == file_size((*it).second))
                     {
-                        tasks.insert(std::make_shared<DataFile<md5, md5::digest_type>>((*it).second));
+                        openedFiles.emplace_back((*it).second.string());
                     }
                 }
 
-                HashChecker<md5, md5::digest_type> head(tasks.size(), tasks);
-                std::thread threadChecker(&HashChecker<md5, md5::digest_type>::check, &head);
+std::cout << '\n';
+std::cout << '\n';
+std::cout << '\n';
 
-                for (std::shared_ptr<DataFile<md5, md5::digest_type>> item : tasks)
+                size_t cntProcessedFiles = 0;
+                while(cntProcessedFiles != openedFiles.size())
                 {
-                    threadPool.emplace_back(std::make_shared<std::thread>(&DataFile<md5, md5::digest_type>::readBlockOfFile, item.get())); //std::transform algorithm
-                    ++itMap;
+                    for (auto& item: openedFiles)
+                    {
+                        auto restReadSize = item.fileSize - item.fd.tellg();
+                        if (restReadSize > 0)
+                        {
+                            auto currBlockSize = ((restReadSize / item.blockSize)  >= 1.0) ? item.blockSize : restReadSize;
+
+                            std::unique_ptr<char[]> readBlock = std::make_unique<char[]>(item.blockSize);
+//                            std::cout << "B:" << item.fd.tellg() << '\t' << (item.fileSize - item.fd.tellg()) << '\t' << ((item.fileSize - item.fd.tellg()) / item.blockSize) << '\n';
+                            item.fd.read(readBlock.get(), currBlockSize);
+//                            std::cout << "E:" << item.fd.tellg() << '\t' << (item.fileSize - item.fd.tellg()) << '\n';
+                            if (!item.fd.fail())
+                            {
+//                                std::cout << std::string(readBlock.get(), currBlockSize) << '\n';
+                                item.hashFile += getHash<md5, md5::digest_type>(readBlock.get(), currBlockSize, item.hashMethod);
+                            }
+                        }
+                        else
+                        {
+                            ++cntProcessedFiles;
+                            ++itMap;
+
+                            if (item.fd.is_open())
+                            {   item.fd.close();    }
+
+                             continue;
+                        }
+                    }
+
+                    // Matching
+                    std::queue<decltype(openedFiles.begin())> removeItems;
+                    for (auto refIt = openedFiles.begin(); refIt != openedFiles.end(); ++refIt)
+                    {
+                        const std::string& referenceStr = (*refIt).hashFile;
+                        auto otherIt = openedFiles.begin();
+                        for (; otherIt != openedFiles.end(); ++otherIt)
+                        {
+                            if (((*otherIt).hashFile == referenceStr) && (otherIt != refIt))
+                            {   break;  }
+                        }
+
+                        if (otherIt == openedFiles.end())
+                        {
+                            std::cout << "Erase()! " << (*refIt).pathToFile << '\t';
+
+                            ++itMap;
+
+                            if ((*refIt).fd.is_open())
+                            {   (*refIt).fd.close();   }
+
+                            removeItems.push(refIt);
+                        }
+                    }
+
+                    while(removeItems.size() != 0)
+                    {
+                        openedFiles.erase(removeItems.front());
+                        removeItems.pop();
+                    }
                 }
 
-
-                for (auto& item : threadPool)
+                std::cout << "Doubles:\n";
+                for (auto& item: openedFiles)
                 {
-                    if ((item) && (item->joinable()))
-                    {   item->join();   }
+                    std::cout << item.pathToFile << '\n';
                 }
-
-                if (threadChecker.joinable())
-                {
-                    threadChecker.join();
-                }
-
-                head.setDone();
-
             }
         }
 
@@ -613,7 +561,7 @@ void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthSc
                     )
                 {
                     doubleFiles.insert({file_size(iterPath), iterPath});
-                    std::cout << static_cast<uint64_t>(file_size(iterPath)) << "  " << iterPath.string() << '\n';
+//                    std::cout << static_cast<uint64_t>(file_size(iterPath)) << "  " << iterPath.string() << '\n';
                 }
             }
             else if (
