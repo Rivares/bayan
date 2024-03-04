@@ -9,187 +9,12 @@
 #include <atomic>
 #include <mutex>
 #include <queue>
-#include <regex>
 #include <list>
 
-#include <boost/interprocess/file_mapping.hpp>
-#include <boost/interprocess/mapped_region.hpp>
-#include <boost/program_options.hpp>
-#include <boost/filesystem.hpp>
 
-#include <boost/algorithm/hex.hpp>
-#include <boost/uuid/detail/md5.hpp>
-#include <boost/uuid/detail/sha1.hpp>
 
 #include "lib.hpp"
 
-namespace prog_opt = boost::program_options;
-using namespace boost::filesystem;
-using boost::uuids::detail::md5;
-using boost::uuids::detail::sha1;
-
-// Builder pattern
-class Settings
-{
-    std::vector<std::string> m_pathsForScan;
-    std::vector<std::string> m_pathsForUnScan;
-    size_t m_depthScan;
-    size_t m_minimalSizeOfFile;
-    std::string m_maskForScan;
-    size_t m_sizeOfBlock;
-    std::string m_hashAlg;
-
-public:
-    Settings() :
-        m_pathsForScan()
-        , m_pathsForUnScan()
-        , m_depthScan(0)
-        , m_minimalSizeOfFile(1)
-        , m_maskForScan("*")
-        , m_sizeOfBlock(1)
-        , m_hashAlg("md5")
-    {};
-    ~Settings() = default;
-
-    friend class SettingsBuilder;
-
-    std::vector<std::string> getPathsForScan() const
-    {   return m_pathsForScan;  }
-
-    std::vector<std::string> getPathsForUnScan() const
-    {   return m_pathsForUnScan;  }
-
-    size_t getDepthScan() const
-    {   return m_depthScan;  }
-
-    size_t getMinimalSizeOfFile() const
-    {   return m_minimalSizeOfFile;  }
-
-    std::string getMaskForScan() const
-    {   return m_maskForScan;  }
-
-    size_t getSizeOfBlock() const
-    {   return m_sizeOfBlock;  }
-
-    std::string getHashAlg() const
-    {   return m_hashAlg;  }
-};
-
-class SettingsBuilder
-{
-    Settings m_settings;
-
-public:
-    SettingsBuilder() = default;
-    ~SettingsBuilder() = default;
-
-    SettingsBuilder& withPathScan(const std::vector<std::string>& pathsForScan)
-    {
-        m_settings.m_pathsForScan = pathsForScan;
-        return *this;
-    }
-
-    SettingsBuilder& withPathUnScan(const std::vector<std::string>& pathsForUnScan)
-    {
-        m_settings.m_pathsForUnScan = pathsForUnScan;
-        return *this;
-    }
-
-    SettingsBuilder& withDepthScan(const size_t& depthScan)
-    {
-        m_settings.m_depthScan = depthScan;
-        return *this;
-    }
-
-    SettingsBuilder& withMinimalSizeOfFile(const size_t& minimalSizeOfFile)
-    {
-        m_settings.m_minimalSizeOfFile = minimalSizeOfFile;
-        return *this;
-    }
-
-    SettingsBuilder& withMaskForScan(const std::string& maskForScan)
-    {
-        m_settings.m_maskForScan = maskForScan;
-        return *this;
-    }
-
-    SettingsBuilder& withSizeOfBlock(const size_t& sizeOfBlock)
-    {
-        m_settings.m_sizeOfBlock = sizeOfBlock;
-        return *this;
-    }
-
-    SettingsBuilder& withHashAlg(const std::string& hashAlg)
-    {
-        m_settings.m_hashAlg = hashAlg;
-        return *this;
-    }
-
-    Settings& build()
-    {
-        return m_settings;
-    }
-};
-
-void outputFiles(Settings& options, const path& currPath, size_t& curDepthScan, const std::vector<path>& unScanPath);
-std::unordered_multimap</*uint64_t*/ boost::uintmax_t, path> doubleFiles;
-
-
-
-/*!
-    Логика структуры - простое наследование с разграничением функционала по классам
-*/
-
-
-
-template <typename HashType, typename HashType_DigestType>
-std::string getHash(char* readBlock, const uint64_t blockSize, HashType m_currHash)
-{
-    std::string result;
-    HashType_DigestType digest;
-
-    m_currHash.process_bytes(readBlock, blockSize);
-    m_currHash.get_digest(digest);
-
-    const auto charDigest = reinterpret_cast<const char*>(&digest);
-
-    boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
-
-    result.resize(5);
-
-    return result;
-}
-
-template <typename HashType, typename HashType_DigestType>
-struct DataFile
-{
-    explicit DataFile(const std::string& pathToFile_)
-        : pathToFile(pathToFile_)
-        , fileSize(static_cast<uint64_t>(file_size(pathToFile)))
-        , fd(pathToFile, std::ios::in | std::ios::binary)
-        , blockSize(200)
-    {
-        if (!fd.is_open())
-        {   std::cout << "Error open file!\n";    } // std::throw
-    }
-
-    ~DataFile()
-    {
-        std::cout << "~DataFile()!\n";
-
-        if (fd.is_open())
-        {   fd.close(); }
-    }
-
-    const std::string& pathToFile;
-    uint64_t fileSize;
-    std::ifstream fd;
-    int positionRead = 0;
-    bool isClosed = false;
-    uint32_t blockSize;
-    HashType hashMethod;
-    std::string hashFile;
-};
 
 int main(int argc, const char* argv[])
 {
@@ -313,7 +138,10 @@ int main(int argc, const char* argv[])
                 ("hash",prog_opt::value<std::string>()->default_value("md5"),       "algorithm of hash (md5, crc32)")
                 ;
 
+        ///    Пример запуска этой утилиты
         // bayan --sc="path" "path" --unsc="path" "path" --dpth=2 --msf=5 --mask="*" --sb=20 --hash=md5
+        // bayan --sc="./" "/home/user/0_projects" --unsc="/home/user/0_projects/Arduino/libraries/ArduinoRS485"  "/home/ermolov/0_projects/Arduino/libraries/Modbus-Master-Slave-for-Arduino-master" --dpth=4 --msf=5 --mask=".*\.(cpp|h)" --sb=20 --hash=sha1
+
         prog_opt::variables_map vm;
         prog_opt::store(parse_command_line(argc, argv, desc), vm);
         prog_opt::notify(vm);
@@ -351,13 +179,10 @@ int main(int argc, const char* argv[])
         Settings options = optionsBuilder.build();
 
 
-
-
-
-
         size_t curDepthScan = 0;
         const auto& listUnScan = options.getPathsForUnScan();
 
+        ///    1. Исколючение из поиска путей, которые не нужно сканировать (m_pathsForUnScan)
         for (path currPath: options.getPathsForScan())
         {
             currPath = (currPath.is_relative())? current_path() : currPath;
@@ -404,12 +229,11 @@ int main(int argc, const char* argv[])
 //                std::cout << "Full " << currPath.string() << '\n';
                 continue;
             }
-
         }
 
 
 
-
+        ///    2 б). Исколючение из поиска файлов, которые "уникальны" по размеру
         for (auto itMap = doubleFiles.begin(); itMap != doubleFiles.end();)
         {
             if (doubleFiles.count(itMap->first) == 1)
@@ -419,15 +243,15 @@ int main(int argc, const char* argv[])
                 auto bucket = doubleFiles.bucket(itMap->first);
                 auto itr = doubleFiles.begin(bucket);
                 auto referenceSize = file_size((*itr).second);
+                auto blockSize = options.getSizeOfBlock();
 
 
-
-                std::list<DataFile<md5, md5::digest_type>> openedFiles;
+                std::list<DataFile> openedFiles;
                 for (auto it = doubleFiles.begin(bucket); it != doubleFiles.end(bucket); ++it)
                 {
                     if (referenceSize == file_size((*it).second))
                     {
-                        openedFiles.emplace_back((*it).second.string());
+                        openedFiles.emplace_back((*it).second.string(), blockSize);
                     }
                 }
 
@@ -443,16 +267,26 @@ std::cout << '\n';
                         auto restReadSize = item.fileSize - item.fd.tellg();
                         if (restReadSize > 0)
                         {
+                            ///    3. Формирование необходимого  размера блока данных
                             auto currBlockSize = ((restReadSize / item.blockSize)  >= 1.0) ? item.blockSize : restReadSize;
-
                             std::unique_ptr<char[]> readBlock = std::make_unique<char[]>(item.blockSize);
-//                            std::cout << "B:" << item.fd.tellg() << '\t' << (item.fileSize - item.fd.tellg()) << '\t' << ((item.fileSize - item.fd.tellg()) / item.blockSize) << '\n';
+
+                            ///    4. Чтение блока данных из преодполагаемых файлов-дубликатов
                             item.fd.read(readBlock.get(), currBlockSize);
-//                            std::cout << "E:" << item.fd.tellg() << '\t' << (item.fileSize - item.fd.tellg()) << '\n';
+
                             if (!item.fd.fail())
                             {
 //                                std::cout << std::string(readBlock.get(), currBlockSize) << '\n';
-                                item.hashFile += getHash<md5, md5::digest_type>(readBlock.get(), currBlockSize, item.hashMethod);
+
+                                ///    5. Получение хэша блока данных выбранным методом
+                                if (options.getHashAlg() == "sha1")
+                                {
+                                    item.hashFile += getHash<sha1, sha1::digest_type>(readBlock.get(), currBlockSize);
+                                }
+                                else
+                                {
+                                    item.hashFile += getHash<md5, md5::digest_type>(readBlock.get(), currBlockSize);
+                                }
                             }
                         }
                         else
@@ -467,7 +301,7 @@ std::cout << '\n';
                         }
                     }
 
-                    // Matching
+                    ///    6. Немедленное прекращение чтения файла, который оказался уникальным
                     std::queue<decltype(openedFiles.begin())> removeItems;
                     for (auto refIt = openedFiles.begin(); refIt != openedFiles.end(); ++refIt)
                     {
@@ -481,12 +315,12 @@ std::cout << '\n';
 
                         if (otherIt == openedFiles.end())
                         {
-                            std::cout << "Erase()! " << (*refIt).pathToFile << '\t';
-
-                            ++itMap;
+//                            std::cout << "Erase()! " << (*refIt).pathToFile << '\t';
 
                             if ((*refIt).fd.is_open())
                             {   (*refIt).fd.close();   }
+
+                            ++itMap;
 
                             removeItems.push(refIt);
                         }
@@ -499,6 +333,7 @@ std::cout << '\n';
                     }
                 }
 
+                ///    7. Вывод настоящих файлов-дубликатов
                 std::cout << "Doubles:\n";
                 for (auto& item: openedFiles)
                 {
@@ -519,70 +354,5 @@ std::cout << '\n';
 
     ProfilerStop();
     return 0;
-}
-
-
-void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthScan, const std::vector<path>& unScanPath)
-{
-    auto outputPath = [](const size_t replacedCount, const path& path_){
-        std::string replacedStr(path_.string());
-//        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
-    };
-
-    auto checkMatchPath = [unScanPath](const path& path_) -> bool {
-        for(const auto& item : unScanPath)
-        {
-            if (path_.compare(item) == 0)
-            {   return true;    }
-        }
-        return false;
-    };
-
-    ++curDepthScan;
-
-    directory_iterator itrBeg(currGlobPath);
-    directory_iterator itrEnd;
-    path prevPath = currGlobPath;
-    while((curDepthScan < options.getDepthScan()) || ((itrBeg == itrEnd)))
-    {
-        while (itrBeg != itrEnd)
-        {
-            path iterPath = itrBeg->path();
-
-            if (is_regular_file(iterPath))
-            {
-                outputPath(currGlobPath.string().size(), iterPath);
-
-                if (
-                        (static_cast<size_t>(iterPath.size()) > options.getMinimalSizeOfFile()) &&
-                        (std::regex_search(iterPath.string()
-                                          , std::regex(options.getMaskForScan()
-                                          , std::regex_constants::ECMAScript)))
-                    )
-                {
-                    doubleFiles.insert({file_size(iterPath), iterPath});
-//                    std::cout << static_cast<uint64_t>(file_size(iterPath)) << "  " << iterPath.string() << '\n';
-                }
-            }
-            else if (
-                     (is_directory(iterPath)) &&
-                     (curDepthScan < options.getDepthScan()) &&
-                     (!checkMatchPath(iterPath))
-                     )
-            {
-                prevPath = currGlobPath;
-
-                outputPath(currGlobPath.string().size(), iterPath);
-
-                outputFiles(options, iterPath, curDepthScan, unScanPath);
-            }
-            ++itrBeg;
-        }
-        break;
-        // Отметка проверенных папок
-
-    }
-    --curDepthScan;
-
 }
 

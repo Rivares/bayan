@@ -1,157 +1,282 @@
 #include <gperftools/profiler.h>
 
 #include <iostream>
-#include <fstream>
-#include <string>
-#include <queue>
-#include <ctime>
+#include <regex>
+
+#include <boost/interprocess/file_mapping.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/program_options.hpp>
+#include <boost/filesystem.hpp>
+
+#include <boost/algorithm/hex.hpp>
+#include <boost/uuid/detail/md5.hpp>
+#include <boost/uuid/detail/sha1.hpp>
+
+namespace prog_opt = boost::program_options;
+using namespace boost::filesystem;
+using boost::uuids::detail::md5;
+using boost::uuids::detail::sha1;
 
 
-/*!
-    Логика структуры - простое наследование с разграничением функционала по классам
-*/
-
-class Logger
+class Settings
 {
-protected:
-    std::string projName;
-    std::queue<std::string> commands;
-    time_t timeFirstCommandOut;
+    std::vector<std::string> m_pathsForScan;
+    std::vector<std::string> m_pathsForUnScan;
+    size_t m_depthScan;
+    size_t m_minimalSizeOfFile;
+    std::string m_maskForScan;
+    size_t m_sizeOfBlock;
+    std::string m_hashAlg;
 
 public:
-    Logger(const std::string& projName_ = "bulk") :
-        projName(projName_)
-      , timeFirstCommandOut(time(nullptr))
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
-    virtual ~Logger()
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
+    Settings() :
+        m_pathsForScan()
+        , m_pathsForUnScan()
+        , m_depthScan(0)
+        , m_minimalSizeOfFile(1)
+        , m_maskForScan("*")
+        , m_sizeOfBlock(1)
+        , m_hashAlg("md5")
+    {};
+    ~Settings() = default;
+
+    friend class SettingsBuilder;
+
+    /*!
+        Функция void getPathsForScan()
+        - получение путей до папок, которых нужно сканировать на поиск файлов-дубликатов
+    */
+    std::vector<std::string> getPathsForScan() const
+    {   return m_pathsForScan;  }
+
+    /*!
+        Функция void getPathsForUnScan()
+        - получение путей до папок, которых нужно исключить из сканирования на поиск файлов-дубликатов
+    */
+    std::vector<std::string> getPathsForUnScan() const
+    {   return m_pathsForUnScan;  }
 
     /*!
         Функция void pushCommand(const std::string& command)
         - добавление новой комманды в очередь std::queue<std::string> commands
         и фиксация времени поступления первой комманды time_t timeFirstCommandOut
     */
-    void pushCommand(const std::string& command)
-    {
-        if (command.empty())
-        {   return;   }
-
-        commands.push(command);
-
-        if (commands.size() == 1)
-        {   timeFirstCommandOut = time(nullptr); }
-    }
+    /*!
+        Функция void getDepthScan()
+        - получение глубины сканирования.
+    */
+    size_t getDepthScan() const
+    {   return m_depthScan;  }
 
     /*!
-        Функция size_t countCommands() const)
-        - получение текущего кол-ва комманд из очереди std::queue<std::string> commands
+        Функция void getDepthScan()
+        - получение минмиального размера файла для сканирования.
     */
-    size_t countCommands() const
-    {   return commands.size(); }
+    size_t getMinimalSizeOfFile() const
+    {   return m_minimalSizeOfFile;  }
+
+    /*!
+        Функция void getDepthScan()
+        - получение маски имени файла для сканирования.
+    */
+    std::string getMaskForScan() const
+    {   return m_maskForScan;  }
+
+    /*!
+        Функция void getDepthScan()
+        - получение размера блока памяти файла при сканировании.
+    */
+    size_t getSizeOfBlock() const
+    {   return m_sizeOfBlock;  }
+
+    /*!
+        Функция void getDepthScan()
+        - получение выбранного метода получения хэша для прочитанного блока памяти файла.
+    */
+    std::string getHashAlg() const
+    {   return m_hashAlg;  }
+};
+
+/// Use Builder pattern
+///
+class SettingsBuilder
+{
+    Settings m_settings;
+
+public:
+    SettingsBuilder() = default;
+    ~SettingsBuilder() = default;
+
+    SettingsBuilder& withPathScan(const std::vector<std::string>& pathsForScan)
+    {
+        m_settings.m_pathsForScan = pathsForScan;
+        return *this;
+    }
+
+    SettingsBuilder& withPathUnScan(const std::vector<std::string>& pathsForUnScan)
+    {
+        m_settings.m_pathsForUnScan = pathsForUnScan;
+        return *this;
+    }
+
+    SettingsBuilder& withDepthScan(const size_t& depthScan)
+    {
+        m_settings.m_depthScan = depthScan;
+        return *this;
+    }
+
+    SettingsBuilder& withMinimalSizeOfFile(const size_t& minimalSizeOfFile)
+    {
+        m_settings.m_minimalSizeOfFile = minimalSizeOfFile;
+        return *this;
+    }
+
+    SettingsBuilder& withMaskForScan(const std::string& maskForScan)
+    {
+        m_settings.m_maskForScan = maskForScan;
+        return *this;
+    }
+
+    SettingsBuilder& withSizeOfBlock(const size_t& sizeOfBlock)
+    {
+        m_settings.m_sizeOfBlock = sizeOfBlock;
+        return *this;
+    }
+
+    SettingsBuilder& withHashAlg(const std::string& hashAlg)
+    {
+        m_settings.m_hashAlg = hashAlg;
+        return *this;
+    }
+
+    Settings& build()
+    {
+        return m_settings;
+    }
 };
 
 
-class LoggerFixedCntCMDs : public Logger
+std::unordered_multimap<boost::uintmax_t, path> doubleFiles;
+
+
+void outputFiles(Settings& options, const path& currGlobPath, size_t& curDepthScan, const std::vector<path>& unScanPath)
 {
-public:
-    enum class Mode
-    {
-        GEN,
-        REMAINING
+    auto outputPath = [](const size_t replacedCount, const path& path_){
+        std::string replacedStr(path_.string());
+//        std::cout << "|_" << replacedStr.replace(0, replacedCount, replacedCount, '_') << '\n';
     };
 
-private:
-    size_t cntCommands;
-
-public:
-    LoggerFixedCntCMDs(size_t cntCommands_ = 3) :
-        cntCommands(cntCommands_)
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
-
-    ~LoggerFixedCntCMDs() override
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
-
-    /*!
-        Функция std::string logMessage(Mode currModeOutput = Mode::GEN)
-        - вывод комманд из очереди std::queue<std::string> commands в двух режимах:
-        1) Mode::GEN - позволяет вывести только фиксированное кол-во комманд из очереди.
-        2) Mode::REMAINING - позволяет вывести оставшиеся комманды из очереди.
-    */
-    std::string logMessage(Mode currModeOutput = Mode::GEN)
-    {
-        if (commands.size() == 0)
-        {   return "";   }
-
-        std::string outputStrForTests;
-
-        size_t currSizeOfQueue = cntCommands;
-        if (currModeOutput == Mode::REMAINING)
-        {   currSizeOfQueue = commands.size();  }
-
-        if (commands.size() == currSizeOfQueue)
+    auto checkMatchPath = [unScanPath](const path& path_) -> bool {
+        for(const auto& item : unScanPath)
         {
-            std::ofstream file(projName + std::to_string(static_cast<ulong>(timeFirstCommandOut)) + ".log");
+            if (path_.compare(item) == 0)
+            {   return true;    }
+        }
+        return false;
+    };
 
-            const std::string prefixStr = projName + ": ";
-            outputStrForTests = prefixStr;
+    ++curDepthScan;
 
-            std::cout << prefixStr;
-            file << prefixStr;
-            for (size_t i = 0; i < currSizeOfQueue; ++i)
+    directory_iterator itrBeg(currGlobPath);
+    directory_iterator itrEnd;
+    path prevPath = currGlobPath;
+    while((curDepthScan < options.getDepthScan()) || ((itrBeg == itrEnd)))
+    {
+        while (itrBeg != itrEnd)
+        {
+            path iterPath = itrBeg->path();
+
+            if (is_regular_file(iterPath))
             {
-                const std::string outStr = commands.front() + (((i + 1) < currSizeOfQueue)? ", " : "\n");
-                outputStrForTests += outStr;
+                outputPath(currGlobPath.string().size(), iterPath);
 
-                std::cout << outStr;
-                file << outStr;
-
-                commands.pop();
+                ///    2 а). Исколючение из поиска файлов, которые:
+                ///    меньше минимального рамера
+                ///    или
+                ///    имя файла не удовлетворяет заданной маске
+                if (
+                        (static_cast<size_t>(iterPath.size()) > options.getMinimalSizeOfFile()) &&
+                        (std::regex_search(iterPath.string()
+                                          , std::regex(options.getMaskForScan()
+                                          , std::regex_constants::ECMAScript)))
+                    )
+                {
+                    doubleFiles.insert({file_size(iterPath), iterPath});
+//                    std::cout << static_cast<uint64_t>(file_size(iterPath)) << "  " << iterPath.string() << '\n';
+                }
             }
-            file.close();
+            else if (
+                     (is_directory(iterPath)) &&
+                     (curDepthScan < options.getDepthScan()) &&
+                     (!checkMatchPath(iterPath))
+                     )
+            {
+                prevPath = currGlobPath;
+
+                outputPath(currGlobPath.string().size(), iterPath);
+
+                outputFiles(options, iterPath, curDepthScan, unScanPath);
+            }
+            ++itrBeg;
         }
-
-        return outputStrForTests;
+        break;
     }
-};
+    --curDepthScan;
+}
 
-class LoggerRemainingCMDs : public Logger
+
+
+/*!
+    Ф-ия взятия хэша блока памяти
+*/
+template <typename HashType, typename HashType_DigestType>
+std::string getHash(char* readBlock, const uint64_t blockSize)
 {
-public:
-    LoggerRemainingCMDs()
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
+    std::string result;
+    HashType_DigestType digest;
 
-    ~LoggerRemainingCMDs() override
-    {   /*std::cout << __PRETTY_FUNCTION__ << '\n';*/   }
+    HashType m_currHash;
+    m_currHash.process_bytes(readBlock, blockSize);
+    m_currHash.get_digest(digest);
 
-    /*!
-        Функция std::string logMessage()
-        - вывод всех комманд из очереди std::queue<std::string> commands.
-    */
-    std::string logMessage()
+    const auto charDigest = reinterpret_cast<const char*>(&digest);
+
+    boost::algorithm::hex(charDigest, charDigest + sizeof(md5::digest_type), std::back_inserter(result));
+
+    result.resize(5); // Cutting hash
+
+    return result;
+}
+
+/*!
+    Структура DataFile - хранилище св-в файла
+*/
+struct DataFile
+{
+    explicit DataFile(const std::string& pathToFile_, uint32_t blockSize_)
+        : pathToFile(pathToFile_)
+        , fileSize(static_cast<uint64_t>(file_size(pathToFile)))
+        , fd(pathToFile, std::ios::in | std::ios::binary)
+        , blockSize(blockSize_)
     {
-        if (commands.size() == 0)
-        {   return "";   }
-
-        std::ofstream file(projName + std::to_string(static_cast<ulong>(timeFirstCommandOut)) + ".log");
-
-        const std::string prefixStr = projName + ": ";
-        std::string outputStrForTests = prefixStr;
-
-        std::cout << prefixStr;
-        file << prefixStr;
-        while (commands.size() != 0)
-        {
-            const std::string outStr = commands.front() + (((commands.size() - 1) != 0)? ", " : "\n");
-            outputStrForTests += outStr;
-
-            std::cout << outStr;
-            file << outStr;
-
-            commands.pop();
-        }
-        file.close();
-
-        return outputStrForTests;
+        if (!fd.is_open())
+        {   std::cout << "Error open file!\n";    } // std::throw
     }
+
+    ~DataFile()
+    {
+//        std::cout << "~DataFile()!\n";
+
+        if (fd.is_open())
+        {   fd.close(); }
+    }
+
+    const std::string& pathToFile;
+    uint64_t fileSize;
+    std::ifstream fd;
+
+    uint32_t blockSize;
+    std::string hashFile;
 };
+
 
