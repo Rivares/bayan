@@ -32,5 +32,6 @@ ___
 ## Example
 
 ```shell
-bayan --sc="path" "path" --unsc="path" "path" --dpth=2 --msf=5 --mask="*" --sb=20 --hash=md5
+bayan --sc="path" "path" --unsc="path" "path" --dpth=2 --msf=5 --mask=".*\.(cpp|h)" --sb=20 --hash=md5
+
 ```
