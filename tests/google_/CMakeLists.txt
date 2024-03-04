@@ -19,6 +19,9 @@ target_link_libraries(${package_name} PUBLIC
     gtest
     gmock
     pthread # required
+    ${Boost_LIBRARIES}
+    ${Boost_FILESYSTEM_LIBRARY}
+    ${Boost_SYSTEM_LIBRARY}
 )
 
 # install(TARGETS ${package_name} DESTINATION
